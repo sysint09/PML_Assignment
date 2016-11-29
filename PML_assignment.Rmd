@@ -1,0 +1,132 @@
+---
+title: "Pratical Machine Learning Peers Assignment"
+author: "Walter Trabucco"
+#date: "28 novembre 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning=FALSE,message=FALSE)
+library(ggplot2)
+library(caret)
+library(randomForest)
+```
+
+## PML Prediction Assignment Context
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
+
+## Data
+
+### Data source
+The training data for this project are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csvsee>
+
+### Load and cleaning data
+You load both dataset `dataori*` for training and cross-validation and `valida*` than basically contains the test set for final 20 predictions which will be submitted.
+In the code the idea is that everytime you trasform `dataori*` you have to apply the same trasformation to `valida*` test set.
+```{r}
+dataori<-read.csv("pml-training.csv")
+validaori<-read.csv("pml-testing.csv")
+n<-nrow(dataori)
+str(dataori)
+```
+From the `str()` function you can deduced that we have a large number of covarinats with a lot `NA` value. The data trasformation are:
+
+* remove columns 1 to 6 which are just reference information
+* eliminate the covariants with more 95% of `NA` values
+* eliminate the near zero variance covariants
+
+```{r}
+# remove columns 1 to 6
+dataps<-dataori[,7:160]
+validaps<-validaori[7:160]
+# look for covariants with less 95% of NA values
+nis_na<-colSums(is.na(dataps))/n<0.95
+# apply trasformation both training and test set
+datap1<-dataps[,nis_na]
+validap1<-validaps[,nis_na]
+# look for near zero variance covariants
+nzv<-nearZeroVar(datap1,saveMetrics = FALSE, allowParallel = TRUE,names=FALSE)
+# remove nzv covariants
+datap2<-datap1[,-nzv]
+validap2<-validap1[,-nzv]
+```
+## Data partition
+Now starting from `datap2`, data training without almost NA and near zero variance covariants, we generate a *training* partition plus a *testing* partition for the cross-validation using `classe` as outcome covariant.
+```{r}
+data<-datap2
+set.seed(32323)
+indextrain<-createDataPartition(y=data$classe,p=0.7,list=FALSE)
+training<-data[indextrain,]
+testing<-data[-indextrain,]
+```
+
+## Fit the models
+The issue is a classification problem and based the Coursera course you know one of the best methos for that problem is *Random Forest*, `method="rf"`. Anyway we try to use also`method="rpart"` and compare them.
+
+### Rpart - Recursive Partitioning and Regression Trees
+
+```{r cache=TRUE}
+startRP<-proc.time()
+trControlRP<-trainControl(method = "cv",number = 5)
+modFitRP<-train(classe ~ ., method="rpart", data=training,trControl=trControlRP)
+endRF<-proc.time()
+tRP<-(endRF-startRP)/60
+```
+
+We use `r tRP[3]` min to fit this tree model:
+```{r}
+library(rattle)
+fancyRpartPlot(modFitRP$finalModel)
+```
+
+### Random Forest
+
+```{r cache=TRUE}
+startRF<-proc.time()
+trControlRF<-trainControl(method = "cv",number = 5,allowParallel=TRUE)
+modFitRF<-train(classe ~ ., method="rf", data=training,trControl=trControlRF,verbose=FALSE,allowParallel=TRUE)
+endRF<-proc.time()
+tRF<-(endRF-startRF)/60
+```
+
+We use `r tRF[3]` min to fit a random forest model with these relavant covariants:
+
+```{r}
+varImpPlot(modFitRF$finalModel)
+```
+
+## Cross Validation and comparison
+```{r}
+predRP<-predict(modFitRP,testing)
+predRF<-predict(modFitRF,testing)
+```
+
+```{r}
+RP<-confusionMatrix(predRP,testing$classe)
+RP
+```
+
+```{r}
+RF<-confusionMatrix(predRF,testing$classe)
+RF
+```
+
+As you can the *Random Forest* accuracy `r RF$overall[1]` is larger the *Rpart* accuracy `r RP$overall[1]`. In other word the cross-validation using a partition `testing` means that the current Random Forest model is better of Rpart one where we should try to use different combination of covariants.
+
+## Out Sample Error
+The Out Sample Error of `modFitRF` model evalute using `testing` dataset is `1-Accuracy` that means `r round(1-RF$overall[1],4)` %.
+
+## Predict to submit
+So according to the trasformation performed on `dataori*` we use `validap2` as final dataset to predict value for submition to the Coursera course using the Random Forest model `modFitRF`:
+
+```{r}
+predFinalRF<-predict(modFitRF,validap2)
+predFinalRF
+```
